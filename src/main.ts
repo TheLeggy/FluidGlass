@@ -1,3 +1,3 @@
 import { createCanvas } from './fluid-glass';
 
-createCanvas();
+createCanvas(document.querySelector('img')!);
