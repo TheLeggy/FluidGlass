@@ -6,9 +6,17 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "format": "prettier --write . \"!package-lock.json\"",
+    "format:check": "prettier --check . \"!package-lock.json\""
+  },
+  "prettier": {
+    "printWidth": 120,
+    "singleQuote": true,
+    "endOfLine": "auto"
   },
   "devDependencies": {
+    "prettier": "3.10.1",
     "typescript": "7.1.0-beta",
     "vite": "^8.3.8"
   }
