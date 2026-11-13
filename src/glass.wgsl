@@ -6,17 +6,17 @@ struct Rect {
 @group(0) @binding(0) var page: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> glass: Rect;
 
-const r = 10;
+const radius = 10;
 
 fn blur(center: vec2i) -> vec4f {
   let last = vec2i(textureDimensions(page)) - 1;
   var sum = vec4f(0);
-  for (var y = -r; y <= r; y++) {
-    for (var x = -r; x <= r; x++) {
+  for (var y = -radius; y <= radius; y++) {
+    for (var x = -radius; x <= radius; x++) {
       sum += textureLoad(page, clamp(center + vec2i(x, y), vec2i(0), last), 0);
     }
   }
-  let side = f32(2 * r + 1);
+  let side = f32(2 * radius + 1);
   return sum / (side * side);
 }
 
