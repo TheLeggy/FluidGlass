@@ -1,4 +1,4 @@
-import shader from './passthrough.wgsl?raw';
+import shader from './glass.wgsl?raw';
 
 // html-in-canvas needs a flag and ts also has no types for it
 declare global {
@@ -14,6 +14,9 @@ declare global {
 }
 
 export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElement> {
+  const glass = content.querySelector('.glass');
+  if (!glass) throw new Error('No .glass element inside the content');
+
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error('No WebGPU adapter');
   const device = await adapter.requestDevice();
@@ -36,6 +39,8 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
     vertex: { module },
     fragment: { module, targets: [{ format }] },
   });
+
+  const glassRect = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
   let page: GPUTexture | undefined;
   let bindGroup: GPUBindGroup;
@@ -63,6 +68,14 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
     canvas.width = box.inlineSize;
     canvas.height = box.blockSize;
 
+    const scale = canvas.width / entry.contentRect.width;
+    const rect = glass.getBoundingClientRect();
+    device.queue.writeBuffer(
+      glassRect,
+      0,
+      new Float32Array([rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale]),
+    );
+
     page?.destroy();
     page = device.createTexture({
       size: [canvas.width, canvas.height],
@@ -71,7 +84,10 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
     });
     bindGroup = device.createBindGroup({
       layout: pipeline.getBindGroupLayout(0),
-      entries: [{ binding: 0, resource: page.createView() }],
+      entries: [
+        { binding: 0, resource: page.createView() },
+        { binding: 1, resource: { buffer: glassRect } },
+      ],
     });
     canvas.requestPaint();
   }).observe(canvas, { box: 'device-pixel-content-box' });
