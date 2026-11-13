@@ -42,6 +42,13 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
   });
 
   const glassShape = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const pageSampler = device.createSampler({
+    magFilter: 'linear',
+    minFilter: 'linear',
+    // mirroring at the window edge beats smearing the last row of pixels
+    addressModeU: 'mirror-repeat',
+    addressModeV: 'mirror-repeat',
+  });
 
   let page: GPUTexture | undefined;
   let bindGroup: GPUBindGroup;
@@ -55,7 +62,14 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
     device.queue.writeBuffer(
       glassShape,
       0,
-      new Float32Array([rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale, radius * scale]),
+      new Float32Array([
+        rect.x * scale,
+        rect.y * scale,
+        rect.width * scale,
+        rect.height * scale,
+        radius * scale,
+        scale,
+      ]),
     );
 
     device.queue.drawElementImageToTexture(
@@ -93,6 +107,7 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
       entries: [
         { binding: 0, resource: page.createView({ format: 'rgba8unorm-srgb' }) },
         { binding: 1, resource: { buffer: glassShape } },
+        { binding: 2, resource: pageSampler },
       ],
     });
     canvas.requestPaint();

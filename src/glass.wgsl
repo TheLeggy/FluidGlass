@@ -2,23 +2,38 @@ struct Glass {
   position: vec2f,
   size: vec2f,
   radius: f32,
+  scale: f32,
 }
 
 @group(0) @binding(0) var page: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> glass: Glass;
+@group(0) @binding(2) var pageSampler: sampler;
 
-const sigma = 6.0;
-const radius = 18; // past 3 sigma the weights are too small to see
-const bevel = 60.0;
+const sigma = 0.0;
 
-fn blur(center: vec2i) -> vec4f {
-  let last = vec2i(textureDimensions(page)) - 1;
+const bevel = 21.0;
+const stretchFloor = 0.15;
+const foldShare = 0.3;
+const foldMax = 6.0;
+const foldRoom = 24.0;
+const foldFringe = 0.25;
+const stretchFringe = 0.12;
+
+fn pageAt(p: vec2f) -> vec4f {
+  return textureSampleLevel(page, pageSampler, p / vec2f(textureDimensions(page)), 0);
+}
+
+fn blur(at: vec2f) -> vec4f {
+  if (sigma == 0) {
+    return pageAt(at);
+  }
+  let reach = i32(ceil(3 * sigma)); // past 3 sigma the weights are too small to see
   var sum = vec4f(0);
   var total = 0.0;
-  for (var y = -radius; y <= radius; y++) {
-    for (var x = -radius; x <= radius; x++) {
+  for (var y = -reach; y <= reach; y++) {
+    for (var x = -reach; x <= reach; x++) {
       let weight = exp(-f32(x * x + y * y) / (2 * sigma * sigma));
-      sum += weight * textureLoad(page, clamp(center + vec2i(x, y), vec2i(0), last), 0);
+      sum += weight * pageAt(at + vec2f(f32(x), f32(y)));
       total += weight;
     }
   }
@@ -39,14 +54,42 @@ fn roundedBox(p: vec2f, halfSize: vec2f, r: f32) -> f32 {
   return length(max(q, vec2f(0))) + min(max(q.x, q.y), 0) - r;
 }
 
-// TODO: creases can start appearing once the bevel is wider than the corners
-fn outward(p: vec2f, halfSize: vec2f, r: f32) -> vec2f {
-  let q = abs(p) - halfSize + r;
-  var n = select(vec2f(0, 1), vec2f(1, 0), q.x > q.y);
-  if (all(q > vec2f(0))) {
-    n = normalize(q);
+// direction comes from a rounder rect otherwise every corner shows a ridge along its diagonal
+fn outward(p: vec2f, halfSize: vec2f, r: f32, width: f32) -> vec2f {
+  let wide = min(r + width, min(halfSize.x, halfSize.y));
+  let b = max(abs(p) - halfSize + wide, vec2f(0));
+  if (length(b) > 1e-3) {
+    return sign(p) * normalize(b);
   }
-  return n * sign(p);
+  if (halfSize.x - abs(p.x) < halfSize.y - abs(p.y)) {
+    return vec2f(sign(p.x), 0);
+  }
+  return vec2f(0, sign(p.y));
+}
+
+fn stretchOffset(depth: f32, curve: f32) -> f32 {
+  let t = clamp(depth / max(curve, 1e-3), 0, 1);
+  return curve * (1 - stretchFloor) * (0.5 - t + t * t * t - 0.5 * t * t * t * t);
+}
+
+fn foldOffset(depth: f32, curve: f32, body: f32, frost: f32) -> f32 {
+  let span = max(min(curve * foldShare, foldMax * glass.scale), 1e-3);
+  let ratio = frost / span;
+  let room = min(clamp(1.2 * body - curve, 0, 1.6 * curve), foldRoom * glass.scale) / (1 + ratio * ratio);
+  let t = clamp(depth / span, 0, 1);
+  return room * (1 - t) * (1 - t);
+}
+
+fn spectral(p: vec2f, dir: vec2f, off: f32, fringe: f32) -> vec3f {
+  const red = array<f32, 6>(0.5, 0.4, 0.1, 0.0, 0.0, 0.0);
+  const green = array<f32, 6>(0.0, 0.2, 0.3, 0.3, 0.2, 0.0);
+  const blue = array<f32, 6>(0.0, 0.0, 0.0, 0.1, 0.4, 0.5);
+  var sum = vec3f(0);
+  for (var i = 0; i < 6; i++) {
+    let spread = off + ((f32(i) + 0.5) / 6 - 0.5) * 2 * fringe;
+    sum += pageAt(p - dir * spread).rgb * vec3f(red[i], green[i], blue[i]);
+  }
+  return sum;
 }
 
 // one oversized triangle covers the whole screen
@@ -66,13 +109,24 @@ fn fs(@builtin(position) pixel: vec4f) -> @location(0) vec4f {
     return backdrop;
   }
 
-  let t = clamp(-d / bevel, 0, 1);
-  let offset = 0.5 * bevel * (1 - t) * (1 - t); // 0.5 is the most stretch you can get before sample depth flips and makes content look weird
-  let source = pixel.xy - outward(p, halfSize, glass.radius) * offset;
+  let width = bevel * glass.scale;
+  let body = min(halfSize.x, halfSize.y);
+  let curve = min(width, body);
+  let depth = max(-d, 0);
+  let stretched = stretchOffset(depth, curve);
+  let folded = foldOffset(depth, curve, body, sigma);
+  let off = stretched + folded;
+  let fringe = folded * foldFringe + stretched * stretchFringe;
+
+  let dir = outward(p, halfSize, glass.radius, width);
+  let source = pixel.xy - dir * off;
+  var refracted = blur(source);
+  if (fringe > 0.03 * glass.scale) {
+    refracted = vec4f(spectral(pixel.xy, dir, off, fringe), refracted.a);
+  }
 
   let white = 0.0;
-  let blurred = blur(vec2i(source));
   // in linear light a small change to white looks huge
-  let frosted = vec4f(toLinear(mix(toGamma(blurred.rgb), vec3f(1), white)), mix(blurred.a, 1, white));
+  let frosted = vec4f(toLinear(mix(toGamma(refracted.rgb), vec3f(1), white)), mix(refracted.a, 1, white));
   return mix(backdrop, frosted, clamp(0.5 - d, 0, 1));
 }
