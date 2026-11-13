@@ -6,6 +6,20 @@ struct Rect {
 @group(0) @binding(0) var page: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> glass: Rect;
 
+const r = 10;
+
+fn blur(center: vec2i) -> vec4f {
+  let last = vec2i(textureDimensions(page)) - 1;
+  var sum = vec4f(0);
+  for (var y = -r; y <= r; y++) {
+    for (var x = -r; x <= r; x++) {
+      sum += textureLoad(page, clamp(center + vec2i(x, y), vec2i(0), last), 0);
+    }
+  }
+  let side = f32(2 * r + 1);
+  return sum / (side * side);
+}
+
 // one oversized triangle covers the whole screen
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -15,12 +29,12 @@ fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
 
 @fragment
 fn fs(@builtin(position) pixel: vec4f) -> @location(0) vec4f {
-  let color = textureLoad(page, vec2u(pixel.xy), 0);
+  let center = vec2i(pixel.xy);
   let inside = all(pixel.xy >= glass.position) && all(pixel.xy < glass.position + glass.size);
   if (!inside) {
-    return color;
+    return textureLoad(page, center, 0);
   }
 
   let white = 0.4;
-  return color * (1 - white) + white;
+  return blur(center) * (1 - white) + white;
 }
