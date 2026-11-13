@@ -1,32 +1,78 @@
+import shader from './passthrough.wgsl?raw';
+
 // html-in-canvas needs a flag and ts also has no types for it
 declare global {
   interface HTMLCanvasElement {
     requestPaint(): void;
   }
-  interface CanvasRenderingContext2D {
-    drawElementImage(element: Element, x: number, y: number): void;
+  interface GPUQueue {
+    drawElementImageToTexture( // NOTE: first place to check if something breaks
+      source: { source: Element },
+      destination: { texture: GPUTexture; premultipliedAlpha: boolean; colorSpace: PredefinedColorSpace },
+    ): void;
   }
 }
 
-export function createCanvas(content: HTMLElement): HTMLCanvasElement {
+export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElement> {
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error('No WebGPU adapter');
+  const device = await adapter.requestDevice();
+
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position: fixed; inset: 0; width: 100%; height: 100%';
   canvas.setAttribute('content', 'drawable');
   content.setAttribute('drawable', '');
-  Object.assign(content.style, { width: '100%', height: '100%' }); // without this the element shrinks to fit its children
+  Object.assign(content.style, { width: '100%', height: '100%' }); // inside the canvas nothing else gives it a size
   content.before(canvas);
   canvas.append(content);
 
-  const context = canvas.getContext('2d')!;
+  const context = canvas.getContext('webgpu')!;
+  const format = navigator.gpu.getPreferredCanvasFormat();
+  context.configure({ device, format, alphaMode: 'premultiplied' });
+
+  const module = device.createShaderModule({ code: shader });
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module },
+    fragment: { module, targets: [{ format }] },
+  });
+
+  let page: GPUTexture | undefined;
+  let bindGroup: GPUBindGroup;
+
   canvas.addEventListener('paint', () => {
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    context.drawElementImage(content, 0, 0);
+    if (!page) return;
+    device.queue.drawElementImageToTexture(
+      { source: content },
+      { texture: page, premultipliedAlpha: true, colorSpace: 'srgb' },
+    );
+
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store' }],
+    });
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(3);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
   });
 
   new ResizeObserver(([entry]) => {
     const box = entry.devicePixelContentBoxSize[0]; // not on safari yet
     canvas.width = box.inlineSize;
     canvas.height = box.blockSize;
+
+    page?.destroy();
+    page = device.createTexture({
+      size: [canvas.width, canvas.height],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    bindGroup = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: page.createView() }],
+    });
     canvas.requestPaint();
   }).observe(canvas, { box: 'device-pixel-content-box' });
 
