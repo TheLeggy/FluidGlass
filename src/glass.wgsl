@@ -9,15 +9,20 @@ struct Glass {
 @group(0) @binding(1) var<uniform> glass: Glass;
 @group(0) @binding(2) var pageSampler: sampler;
 
-const sigma = 0.0;
-
+// bevel
 const bevel = 21.0;
-const stretchFloor = 0.15;
-const foldShare = 0.3;
-const foldMax = 6.0;
-const foldRoom = 24.0;
 const foldFringe = 0.25;
 const stretchFringe = 0.12;
+// frosting
+const sigma = 0.0;
+const white = 0.0;
+// fold
+const foldShare = 0.3;
+const foldRoom = 24.0;
+
+// fixed limits
+const stretchFloor = 0.15; // at 0 a single row of pixels gets smeared across the whole rim
+const foldMax = 6.0; // any wider and the fold starts to look like a glowing ring
 
 fn pageAt(p: vec2f) -> vec4f {
   return textureSampleLevel(page, pageSampler, p / vec2f(textureDimensions(page)), 0);
@@ -125,7 +130,6 @@ fn fs(@builtin(position) pixel: vec4f) -> @location(0) vec4f {
     refracted = vec4f(spectral(pixel.xy, dir, off, fringe), refracted.a);
   }
 
-  let white = 0.0;
   // in linear light a small change to white looks huge
   let frosted = vec4f(toLinear(mix(toGamma(refracted.rgb), vec3f(1), white)), mix(refracted.a, 1, white));
   return mix(backdrop, frosted, clamp(0.5 - d, 0, 1));
