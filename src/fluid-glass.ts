@@ -53,8 +53,21 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
     addressModeV: 'mirror-repeat',
   });
 
+  const readFrom = (view: GPUTextureView) =>
+    device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: view },
+        { binding: 1, resource: { buffer: glassShapes } },
+        { binding: 2, resource: pageSampler },
+      ],
+    });
+
   let page: GPUTexture | undefined;
-  let bindGroup: GPUBindGroup;
+  let layers: GPUTexture[] = [];
+  let layerViews: GPUTextureView[] = [];
+  let readPage: GPUBindGroup;
+  let readLayer: GPUBindGroup[] = [];
 
   canvas.addEventListener('paint', () => {
     if (!page) return;
@@ -73,15 +86,18 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
     );
 
     const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [
-        { view: context.getCurrentTexture().createView({ format: srgbFormat }), loadOp: 'clear', storeOp: 'store' },
-      ],
+    const screen = context.getCurrentTexture().createView({ format: srgbFormat });
+    glasses.forEach((_, i) => {
+      const below = i === 0 ? readPage : readLayer[(i - 1) % 2];
+      const target = i === glasses.length - 1 ? screen : layerViews[i % 2];
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store' }],
+      });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, below);
+      pass.draw(3, 1, 0, i);
+      pass.end();
     });
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.draw(3);
-    pass.end();
     device.queue.submit([encoder.finish()]);
   });
 
@@ -91,20 +107,24 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
     canvas.height = box.blockSize;
 
     page?.destroy();
+    layers.forEach((layer) => layer.destroy());
     page = device.createTexture({
       size: [canvas.width, canvas.height],
       format: 'rgba8unorm',
       viewFormats: ['rgba8unorm-srgb'],
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
     });
-    bindGroup = device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: page.createView({ format: 'rgba8unorm-srgb' }) },
-        { binding: 1, resource: { buffer: glassShapes } },
-        { binding: 2, resource: pageSampler },
-      ],
-    });
+    layers = [0, 1].map(() =>
+      device.createTexture({
+        size: [canvas.width, canvas.height],
+        format,
+        viewFormats: [srgbFormat],
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+      }),
+    );
+    layerViews = layers.map((layer) => layer.createView({ format: srgbFormat }));
+    readPage = readFrom(page.createView({ format: 'rgba8unorm-srgb' }));
+    readLayer = layerViews.map(readFrom);
     canvas.requestPaint();
   }).observe(canvas, { box: 'device-pixel-content-box' });
 

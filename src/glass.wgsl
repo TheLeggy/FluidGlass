@@ -5,9 +5,9 @@ struct Glass {
   scale: f32,
 }
 
-@group(0) @binding(0) var page: texture_2d<f32>;
+@group(0) @binding(0) var below: texture_2d<f32>;
 @group(0) @binding(1) var<storage, read> glasses: array<Glass>;
-@group(0) @binding(2) var pageSampler: sampler;
+@group(0) @binding(2) var belowSampler: sampler;
 
 // bevel
 const bevel = 21.0;
@@ -24,13 +24,13 @@ const foldRoom = 24.0;
 const stretchFloor = 0.15; // at 0 a single row of pixels gets smeared across the whole rim
 const foldMax = 6.0; // any wider and the fold starts to look like a glowing ring
 
-fn pageAt(p: vec2f) -> vec4f {
-  return textureSampleLevel(page, pageSampler, p / vec2f(textureDimensions(page)), 0);
+fn belowAt(p: vec2f) -> vec4f {
+  return textureSampleLevel(below, belowSampler, p / vec2f(textureDimensions(below)), 0);
 }
 
 fn blur(at: vec2f) -> vec4f {
   if (sigma == 0) {
-    return pageAt(at);
+    return belowAt(at);
   }
   let reach = i32(ceil(3 * sigma)); // past 3 sigma the weights are too small to see
   var sum = vec4f(0);
@@ -38,7 +38,7 @@ fn blur(at: vec2f) -> vec4f {
   for (var y = -reach; y <= reach; y++) {
     for (var x = -reach; x <= reach; x++) {
       let weight = exp(-f32(x * x + y * y) / (2 * sigma * sigma));
-      sum += weight * pageAt(at + vec2f(f32(x), f32(y)));
+      sum += weight * belowAt(at + vec2f(f32(x), f32(y)));
       total += weight;
     }
   }
@@ -92,37 +92,35 @@ fn spectral(p: vec2f, dir: vec2f, off: f32, fringe: f32) -> vec3f {
   var sum = vec3f(0);
   for (var i = 0; i < 6; i++) {
     let spread = off + ((f32(i) + 0.5) / 6 - 0.5) * 2 * fringe;
-    sum += pageAt(p - dir * spread).rgb * vec3f(red[i], green[i], blue[i]);
+    sum += belowAt(p - dir * spread).rgb * vec3f(red[i], green[i], blue[i]);
   }
   return sum;
 }
 
+struct Pixel {
+  @builtin(position) position: vec4f,
+  @location(0) @interpolate(flat) glassIndex: u32,
+}
+
 // one oversized triangle covers the whole screen
 @vertex
-fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+fn vs(@builtin(vertex_index) i: u32, @builtin(instance_index) glassIndex: u32) -> Pixel {
   let corner = vec2f(f32((i << 1) & 2), f32(i & 2));
-  return vec4f(corner * 2 - 1, 0, 1);
+  return Pixel(vec4f(corner * 2 - 1, 0, 1), glassIndex);
 }
 
 @fragment
-fn fs(@builtin(position) pixel: vec4f) -> @location(0) vec4f {
-  let backdrop = textureLoad(page, vec2i(pixel.xy), 0);
-  var glass = glasses[0];
-  var d = roundedBox(pixel.xy - glass.position - glass.size / 2, glass.size / 2, glass.radius);
-  for (var i = 1u; i < arrayLength(&glasses); i++) {
-    let other = glasses[i];
-    let otherD = roundedBox(pixel.xy - other.position - other.size / 2, other.size / 2, other.radius);
-    if (otherD < d) {
-      glass = other;
-      d = otherD;
-    }
-  }
+fn fs(in: Pixel) -> @location(0) vec4f {
+  let pixel = in.position;
+  let backdrop = textureLoad(below, vec2i(pixel.xy), 0);
+  let glass = glasses[in.glassIndex];
+  let halfSize = glass.size / 2;
+  let p = pixel.xy - glass.position - halfSize;
+  let d = roundedBox(p, halfSize, glass.radius);
   if (d > 0.5) {
     return backdrop;
   }
 
-  let halfSize = glass.size / 2;
-  let p = pixel.xy - glass.position - halfSize;
   let width = bevel * glass.scale;
   let body = min(halfSize.x, halfSize.y);
   let curve = min(width, body);
