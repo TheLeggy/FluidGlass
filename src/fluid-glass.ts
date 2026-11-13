@@ -47,6 +47,15 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
 
   canvas.addEventListener('paint', () => {
     if (!page) return;
+
+    const scale = canvas.width / canvas.getBoundingClientRect().width;
+    const rect = glass.getBoundingClientRect();
+    device.queue.writeBuffer(
+      glassRect,
+      0,
+      new Float32Array([rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale]),
+    );
+
     device.queue.drawElementImageToTexture(
       { source: content },
       { texture: page, premultipliedAlpha: true, colorSpace: 'srgb' },
@@ -67,14 +76,6 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
     const box = entry.devicePixelContentBoxSize[0]; // not on safari yet
     canvas.width = box.inlineSize;
     canvas.height = box.blockSize;
-
-    const scale = canvas.width / entry.contentRect.width;
-    const rect = glass.getBoundingClientRect();
-    device.queue.writeBuffer(
-      glassRect,
-      0,
-      new Float32Array([rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale]),
-    );
 
     page?.destroy();
     page = device.createTexture({
