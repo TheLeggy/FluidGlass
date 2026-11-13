@@ -38,6 +38,6 @@ fn fs(@builtin(position) pixel: vec4f) -> @location(0) vec4f {
     return textureLoad(page, center, 0);
   }
 
-  let white = 0.4;
+  let white = 0.1;
   return blur(center) * (1 - white) + white;
 }
