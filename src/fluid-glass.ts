@@ -13,6 +13,7 @@ export function createCanvas(content: HTMLElement): HTMLCanvasElement {
   canvas.style.cssText = 'position: fixed; inset: 0; width: 100%; height: 100%';
   canvas.setAttribute('content', 'drawable');
   content.setAttribute('drawable', '');
+  Object.assign(content.style, { width: '100%', height: '100%' }); // without this the element shrinks to fit its children
   content.before(canvas);
   canvas.append(content);
 
