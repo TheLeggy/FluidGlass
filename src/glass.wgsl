@@ -25,6 +25,14 @@ fn blur(center: vec2i) -> vec4f {
   return sum / total;
 }
 
+fn toGamma(c: vec3f) -> vec3f {
+  return select(1.055 * pow(c, vec3f(1 / 2.4)) - 0.055, c * 12.92, c <= vec3f(0.0031308));
+}
+
+fn toLinear(c: vec3f) -> vec3f {
+  return select(pow((c + 0.055) / 1.055, vec3f(2.4)), c / 12.92, c <= vec3f(0.04045));
+}
+
 // distance to the edge, negative inside
 fn roundedBox(p: vec2f, halfSize: vec2f, r: f32) -> f32 {
   let q = abs(p) - halfSize + r;
@@ -62,7 +70,9 @@ fn fs(@builtin(position) pixel: vec4f) -> @location(0) vec4f {
   let offset = 0.5 * bevel * (1 - t) * (1 - t); // 0.5 is the most stretch you can get before sample depth flips and makes content look weird
   let source = pixel.xy - outward(p, halfSize, glass.radius) * offset;
 
-  let white = 0.0; 
-  let frosted = blur(vec2i(source)) * (1 - white) + white;
+  let white = 0.0;
+  let blurred = blur(vec2i(source));
+  // in linear light a small change to white looks huge
+  let frosted = vec4f(toLinear(mix(toGamma(blurred.rgb), vec3f(1), white)), mix(blurred.a, 1, white));
   return mix(backdrop, frosted, clamp(0.5 - d, 0, 1));
 }
