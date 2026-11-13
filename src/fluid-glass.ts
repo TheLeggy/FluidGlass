@@ -14,8 +14,8 @@ declare global {
 }
 
 export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElement> {
-  const glass = content.querySelector('.glass');
-  if (!glass) throw new Error('No .glass element inside the content');
+  const glasses = [...content.querySelectorAll('.glass')];
+  if (!glasses.length) throw new Error('No .glass element inside the content');
 
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error('No WebGPU adapter');
@@ -41,7 +41,10 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
     fragment: { module, targets: [{ format: srgbFormat }] },
   });
 
-  const glassShape = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const glassShapes = device.createBuffer({
+    size: glasses.length * 24,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
   const pageSampler = device.createSampler({
     magFilter: 'linear',
     minFilter: 'linear',
@@ -57,20 +60,12 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
     if (!page) return;
 
     const scale = canvas.width / canvas.getBoundingClientRect().width;
-    const rect = glass.getBoundingClientRect();
-    const radius = Math.min(parseFloat(getComputedStyle(glass).borderTopLeftRadius), rect.width / 2, rect.height / 2);
-    device.queue.writeBuffer(
-      glassShape,
-      0,
-      new Float32Array([
-        rect.x * scale,
-        rect.y * scale,
-        rect.width * scale,
-        rect.height * scale,
-        radius * scale,
-        scale,
-      ]),
-    );
+    const shapes = glasses.flatMap((glass) => {
+      const rect = glass.getBoundingClientRect();
+      const radius = Math.min(parseFloat(getComputedStyle(glass).borderTopLeftRadius), rect.width / 2, rect.height / 2);
+      return [rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale, radius * scale, scale];
+    });
+    device.queue.writeBuffer(glassShapes, 0, new Float32Array(shapes));
 
     device.queue.drawElementImageToTexture(
       { source: content },
@@ -106,7 +101,7 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
       layout: pipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: page.createView({ format: 'rgba8unorm-srgb' }) },
-        { binding: 1, resource: { buffer: glassShape } },
+        { binding: 1, resource: { buffer: glassShapes } },
         { binding: 2, resource: pageSampler },
       ],
     });

@@ -17,11 +17,21 @@
         height: 100%;
         object-fit: contain;
       }
-      .test-shape {
+      .test-shape-1 {
         position: absolute;
         inset: 0;
-        width: 240px;
-        height: 240px;
+        right: 480px;
+        width: 440px;
+        height: 440px;
+        margin: auto;
+        border-radius: 40px;
+      }
+      .test-shape-2 {
+        position: absolute;
+        inset: 0;
+        left: 420px;
+        width: 440px;
+        height: 880px;
         margin: auto;
         border-radius: 40px;
       }
@@ -32,7 +42,8 @@
     Needs HTML-in-canvas, though -->
     <main>
       <img src="/promo/testimage.jpg" alt="" />
-      <div class="test-shape glass"></div>
+      <div class="test-shape-1 glass"></div>
+      <div class="test-shape-2 glass"></div>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

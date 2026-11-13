@@ -6,7 +6,7 @@ struct Glass {
 }
 
 @group(0) @binding(0) var page: texture_2d<f32>;
-@group(0) @binding(1) var<uniform> glass: Glass;
+@group(0) @binding(1) var<storage, read> glasses: array<Glass>;
 @group(0) @binding(2) var pageSampler: sampler;
 
 // bevel
@@ -77,10 +77,10 @@ fn stretchOffset(depth: f32, curve: f32) -> f32 {
   return curve * (1 - stretchFloor) * (0.5 - t + t * t * t - 0.5 * t * t * t * t);
 }
 
-fn foldOffset(depth: f32, curve: f32, body: f32, frost: f32) -> f32 {
-  let span = max(min(curve * foldShare, foldMax * glass.scale), 1e-3);
+fn foldOffset(depth: f32, curve: f32, body: f32, frost: f32, scale: f32) -> f32 {
+  let span = max(min(curve * foldShare, foldMax * scale), 1e-3);
   let ratio = frost / span;
-  let room = min(clamp(1.2 * body - curve, 0, 1.6 * curve), foldRoom * glass.scale) / (1 + ratio * ratio);
+  let room = min(clamp(1.2 * body - curve, 0, 1.6 * curve), foldRoom * scale) / (1 + ratio * ratio);
   let t = clamp(depth / span, 0, 1);
   return room * (1 - t) * (1 - t);
 }
@@ -107,19 +107,28 @@ fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
 @fragment
 fn fs(@builtin(position) pixel: vec4f) -> @location(0) vec4f {
   let backdrop = textureLoad(page, vec2i(pixel.xy), 0);
-  let halfSize = glass.size / 2;
-  let p = pixel.xy - glass.position - halfSize;
-  let d = roundedBox(p, halfSize, glass.radius);
+  var glass = glasses[0];
+  var d = roundedBox(pixel.xy - glass.position - glass.size / 2, glass.size / 2, glass.radius);
+  for (var i = 1u; i < arrayLength(&glasses); i++) {
+    let other = glasses[i];
+    let otherD = roundedBox(pixel.xy - other.position - other.size / 2, other.size / 2, other.radius);
+    if (otherD < d) {
+      glass = other;
+      d = otherD;
+    }
+  }
   if (d > 0.5) {
     return backdrop;
   }
 
+  let halfSize = glass.size / 2;
+  let p = pixel.xy - glass.position - halfSize;
   let width = bevel * glass.scale;
   let body = min(halfSize.x, halfSize.y);
   let curve = min(width, body);
   let depth = max(-d, 0);
   let stretched = stretchOffset(depth, curve);
-  let folded = foldOffset(depth, curve, body, sigma);
+  let folded = foldOffset(depth, curve, body, sigma, glass.scale);
   let off = stretched + folded;
   let fringe = folded * foldFringe + stretched * stretchFringe;
 
