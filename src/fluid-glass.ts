@@ -31,13 +31,14 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
 
   const context = canvas.getContext('webgpu')!;
   const format = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({ device, format, alphaMode: 'premultiplied' });
+  const srgbFormat = `${format}-srgb` as GPUTextureFormat; // -srgb views hand the shader linear light
+  context.configure({ device, format, viewFormats: [srgbFormat], alphaMode: 'premultiplied' });
 
   const module = device.createShaderModule({ code: shader });
   const pipeline = device.createRenderPipeline({
     layout: 'auto',
     vertex: { module },
-    fragment: { module, targets: [{ format }] },
+    fragment: { module, targets: [{ format: srgbFormat }] },
   });
 
   const glassRect = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -63,7 +64,9 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
 
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
-      colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store' }],
+      colorAttachments: [
+        { view: context.getCurrentTexture().createView({ format: srgbFormat }), loadOp: 'clear', storeOp: 'store' },
+      ],
     });
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
@@ -81,12 +84,13 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
     page = device.createTexture({
       size: [canvas.width, canvas.height],
       format: 'rgba8unorm',
+      viewFormats: ['rgba8unorm-srgb'],
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
     });
     bindGroup = device.createBindGroup({
       layout: pipeline.getBindGroupLayout(0),
       entries: [
-        { binding: 0, resource: page.createView() },
+        { binding: 0, resource: page.createView({ format: 'rgba8unorm-srgb' }) },
         { binding: 1, resource: { buffer: glassRect } },
       ],
     });
