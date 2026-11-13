@@ -6,18 +6,21 @@ struct Rect {
 @group(0) @binding(0) var page: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> glass: Rect;
 
-const radius = 10;
+const sigma = 6.0;
+const radius = 18; // past 3 sigma the weights are too small to see
 
 fn blur(center: vec2i) -> vec4f {
   let last = vec2i(textureDimensions(page)) - 1;
   var sum = vec4f(0);
+  var total = 0.0;
   for (var y = -radius; y <= radius; y++) {
     for (var x = -radius; x <= radius; x++) {
-      sum += textureLoad(page, clamp(center + vec2i(x, y), vec2i(0), last), 0);
+      let weight = exp(-f32(x * x + y * y) / (2 * sigma * sigma));
+      sum += weight * textureLoad(page, clamp(center + vec2i(x, y), vec2i(0), last), 0);
+      total += weight;
     }
   }
-  let side = f32(2 * radius + 1);
-  return sum / (side * side);
+  return sum / total;
 }
 
 // one oversized triangle covers the whole screen
