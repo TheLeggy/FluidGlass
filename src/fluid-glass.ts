@@ -4,6 +4,7 @@ import shader from './glass.wgsl?raw';
 declare global {
   interface HTMLCanvasElement {
     requestPaint(): void;
+    updateElementGeometry(element: Element, options: { canvasTransform: DOMMatrixInit }): void; // NOTE: another place to check if something breaks
   }
   interface GPUQueue {
     drawElementImageToTexture( // NOTE: first place to check if something breaks
@@ -84,6 +85,7 @@ export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElem
       { source: content },
       { texture: page, premultipliedAlpha: true, colorSpace: 'srgb' },
     );
+    canvas.updateElementGeometry(content, { canvasTransform: new DOMMatrix() }); // top left
 
     const encoder = device.createCommandEncoder();
     const screen = context.getCurrentTexture().createView({ format: srgbFormat });
