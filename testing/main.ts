@@ -1,3 +1,3 @@
-import { createCanvas } from '../src/fluid-glass';
+import { createFluidGlass } from '../src/fluid-glass';
 
-createCanvas(document.querySelector('main')!);
+createFluidGlass(document.querySelector('main')!);

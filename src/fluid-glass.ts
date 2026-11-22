@@ -15,7 +15,7 @@ declare global {
   }
 }
 
-export async function createCanvas(content: HTMLElement): Promise<HTMLCanvasElement> {
+export async function createFluidGlass(content: HTMLElement): Promise<HTMLCanvasElement> {
   const glasses = [...content.querySelectorAll('.glass')];
   if (!glasses.length) throw new Error('No .glass element inside the content');
 
