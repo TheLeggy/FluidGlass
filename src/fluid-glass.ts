@@ -37,10 +37,15 @@ export async function createFluidGlass(content: HTMLElement): Promise<HTMLCanvas
   context.configure({ device, format, viewFormats: [srgbFormat], alphaMode: 'premultiplied' });
 
   const module = device.createShaderModule({ code: shader });
-  const pipeline = device.createRenderPipeline({
+  const glassPipeline = device.createRenderPipeline({
     layout: 'auto',
     vertex: { module },
-    fragment: { module, targets: [{ format: srgbFormat }] },
+    fragment: { module, entryPoint: 'fs', targets: [{ format: 'rgba8unorm-srgb' }] },
+  });
+  const showPipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module },
+    fragment: { module, entryPoint: 'show', targets: [{ format: srgbFormat }] },
   });
 
   const glassShapes = device.createBuffer({
@@ -55,21 +60,11 @@ export async function createFluidGlass(content: HTMLElement): Promise<HTMLCanvas
     addressModeV: 'mirror-repeat',
   });
 
-  const readFrom = (view: GPUTextureView) =>
-    device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: view },
-        { binding: 1, resource: { buffer: glassShapes } },
-        { binding: 2, resource: pageSampler },
-      ],
-    });
-
   let page: GPUTexture | undefined;
-  let layers: GPUTexture[] = [];
-  let layerViews: GPUTextureView[] = [];
-  let readPage: GPUBindGroup;
-  let readLayer: GPUBindGroup[] = [];
+  let pageView: GPUTextureView;
+  let below: GPUTexture;
+  let readBelow: GPUBindGroup;
+  let showPage: GPUBindGroup;
 
   const presses = glasses.map(() => new Spring(0, 0.26, 0.55));
   glasses.forEach((glass, i) =>
@@ -95,7 +90,7 @@ export async function createFluidGlass(content: HTMLElement): Promise<HTMLCanvas
     lastPaint = now;
 
     const scale = canvas.width / canvas.getBoundingClientRect().width;
-    const shapes = glasses.flatMap((glass, i) => {
+    const shapes = glasses.map((glass, i) => {
       const rect = glass.getBoundingClientRect();
       const radius = Math.min(parseFloat(getComputedStyle(glass).borderTopLeftRadius), rect.width / 2, rect.height / 2);
       const grow = presses[i].value * 4;
@@ -103,7 +98,7 @@ export async function createFluidGlass(content: HTMLElement): Promise<HTMLCanvas
       const y = rect.y - grow / 2;
       return [x * scale, y * scale, (rect.width + grow) * scale, (rect.height + grow) * scale, radius * scale, scale];
     });
-    device.queue.writeBuffer(glassShapes, 0, new Float32Array(shapes));
+    device.queue.writeBuffer(glassShapes, 0, new Float32Array(shapes.flat()));
 
     device.queue.drawElementImageToTexture(
       { source: content },
@@ -112,18 +107,35 @@ export async function createFluidGlass(content: HTMLElement): Promise<HTMLCanvas
     canvas.updateElementGeometry(content, { canvasTransform: new DOMMatrix() }); // top left
 
     const encoder = device.createCommandEncoder();
-    const screen = context.getCurrentTexture().createView({ format: srgbFormat });
-    glasses.forEach((_, i) => {
-      const below = i === 0 ? readPage : readLayer[(i - 1) % 2];
-      const target = i === glasses.length - 1 ? screen : layerViews[i % 2];
+    for (const [i, [x, y, width, height]] of shapes.entries()) {
+      // a pixel of padding each side because the antialiased edge spills half a pixel past the glass
+      const left = Math.max(Math.floor(x) - 1, 0);
+      const top = Math.max(Math.floor(y) - 1, 0);
+      const areaWidth = Math.min(Math.ceil(x + width) + 1, canvas.width) - left;
+      const areaHeight = Math.min(Math.ceil(y + height) + 1, canvas.height) - top;
+      if (areaWidth <= 0 || areaHeight <= 0) continue;
+
+      const origin = [left, top];
+      encoder.copyTextureToTexture({ texture: page, origin }, { texture: below, origin }, [areaWidth, areaHeight]);
       const pass = encoder.beginRenderPass({
-        colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store' }],
+        colorAttachments: [{ view: pageView, loadOp: 'load', storeOp: 'store' }],
       });
-      pass.setPipeline(pipeline);
-      pass.setBindGroup(0, below);
+      pass.setPipeline(glassPipeline);
+      pass.setBindGroup(0, readBelow);
+      pass.setScissorRect(left, top, areaWidth, areaHeight);
       pass.draw(3, 1, 0, i);
       pass.end();
+    }
+
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        { view: context.getCurrentTexture().createView({ format: srgbFormat }), loadOp: 'clear', storeOp: 'store' },
+      ],
     });
+    pass.setPipeline(showPipeline);
+    pass.setBindGroup(0, showPage);
+    pass.draw(3);
+    pass.end();
     device.queue.submit([encoder.finish()]);
 
     if (!presses.every((press) => press.resting)) canvas.requestPaint();
@@ -135,24 +147,36 @@ export async function createFluidGlass(content: HTMLElement): Promise<HTMLCanvas
     canvas.height = box.blockSize;
 
     page?.destroy();
-    layers.forEach((layer) => layer.destroy());
+    below?.destroy();
     page = device.createTexture({
       size: [canvas.width, canvas.height],
       format: 'rgba8unorm',
       viewFormats: ['rgba8unorm-srgb'],
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.COPY_SRC |
+        GPUTextureUsage.RENDER_ATTACHMENT,
     });
-    layers = [0, 1].map(() =>
-      device.createTexture({
-        size: [canvas.width, canvas.height],
-        format,
-        viewFormats: [srgbFormat],
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
-      }),
-    );
-    layerViews = layers.map((layer) => layer.createView({ format: srgbFormat }));
-    readPage = readFrom(page.createView({ format: 'rgba8unorm-srgb' }));
-    readLayer = layerViews.map(readFrom);
+    below = device.createTexture({
+      size: [canvas.width, canvas.height],
+      format: 'rgba8unorm',
+      viewFormats: ['rgba8unorm-srgb'],
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    pageView = page.createView({ format: 'rgba8unorm-srgb' });
+    readBelow = device.createBindGroup({
+      layout: glassPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: below.createView({ format: 'rgba8unorm-srgb' }) },
+        { binding: 1, resource: { buffer: glassShapes } },
+        { binding: 2, resource: pageSampler },
+      ],
+    });
+    showPage = device.createBindGroup({
+      layout: showPipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: pageView }],
+    });
     canvas.requestPaint();
   }).observe(canvas, { box: 'device-pixel-content-box' });
 

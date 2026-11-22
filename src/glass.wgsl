@@ -141,3 +141,8 @@ fn fs(in: Pixel) -> @location(0) vec4f {
   let frosted = vec4f(toLinear(mix(toGamma(refracted.rgb), vec3f(1), white)), mix(refracted.a, 1, white));
   return mix(backdrop, frosted, clamp(0.5 - d, 0, 1));
 }
+
+@fragment
+fn show(in: Pixel) -> @location(0) vec4f {
+  return textureLoad(below, vec2i(in.position.xy), 0);
+}
